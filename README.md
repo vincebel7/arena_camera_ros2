@@ -60,6 +60,10 @@ Arena Camera deriver for ROS2
           - the topic the camera publish images on.
           - default value is /arena_camera_node/images.
           - if passed as a ros argument, it should be preceded with "/"
+        - camera_name
+          - a name to give the camera.
+          - used as the frame_id (coordinate frame) defined in the message header.
+          - default value is arena_camera.
         - width
           - the width of desired image
           - default value is the one in `default` user profile.
@@ -125,7 +129,7 @@ Arena Camera deriver for ROS2
 
         # simple example for using arguments together
 
-          `ros2 run arena_camera_node start --ros-args -p serial:="904240001" -p topic:=/special_images -p width:=100 -p height:=200 -p pixelformat:=rgb8 -p gain:=10 -p exposure_time:=150 -p trigger_mode:=true` 
+          `ros2 run arena_camera_node start --ros-args -p serial:="904240001" -p topic:=/special_images -p camera_name:=rear_cam -p width:=100 -p height:=200 -p pixelformat:=rgb8 -p gain:=10 -p exposure_time:=150 -p trigger_mode:=true` 
 
 - explore excutables
 
