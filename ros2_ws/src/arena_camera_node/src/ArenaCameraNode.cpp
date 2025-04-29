@@ -51,10 +51,11 @@ void ArenaCameraNode::parse_parameters_()
     // no need to is_passed_trigger_mode_ because it is already a boolean
 
     nextParameterToDeclare = "topic";
+    topic_name_ = this->get_name();
     topic_ = this->declare_parameter(
         "topic", std::string("/") + this->get_name() + "/images");
     // no need to is_passed_topic_
-
+    
     nextParameterToDeclare = "qos_history";
     pub_qos_history_ = this->declare_parameter("qos_history", "");
     is_passed_pub_qos_history_ = pub_qos_history_ != "";
@@ -270,7 +271,7 @@ void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
         static_cast<uint32_t>(pImage->GetTimestampNs() / 1000000000);
     image_msg.header.stamp.nanosec =
         static_cast<uint32_t>(pImage->GetTimestampNs() % 1000000000);
-    image_msg.header.frame_id = std::to_string(pImage->GetFrameId());
+    image_msg.header.frame_id = topic_name_;
 
     //
     // 2 ) Height
