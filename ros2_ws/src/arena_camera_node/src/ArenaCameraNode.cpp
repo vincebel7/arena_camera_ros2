@@ -50,8 +50,11 @@ void ArenaCameraNode::parse_parameters_()
     trigger_mode_activated_ = this->declare_parameter("trigger_mode", false);
     // no need to is_passed_trigger_mode_ because it is already a boolean
 
+    nextParameterToDeclare = "camera_name";
+    camera_name_ = this->declare_parameter("camera_name", "arena_camera");
+    // no need to is_passed_camera_name_
+
     nextParameterToDeclare = "topic";
-    topic_name_ = this->get_name();
     topic_ = this->declare_parameter(
         "topic", std::string("/") + this->get_name() + "/images");
     // no need to is_passed_topic_
@@ -271,7 +274,7 @@ void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
         static_cast<uint32_t>(pImage->GetTimestampNs() / 1000000000);
     image_msg.header.stamp.nanosec =
         static_cast<uint32_t>(pImage->GetTimestampNs() % 1000000000);
-    image_msg.header.frame_id = topic_name_;
+    image_msg.header.frame_id = camera_name_;
 
     //
     // 2 ) Height
@@ -427,8 +430,8 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_exposure_();
   set_nodes_trigger_mode_();
   // configure Auto Negotiate Packet Size and Packet Resend
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", True);
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", True);
+  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
+  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
 
   //set_nodes_test_pattern_image_();
 }
