@@ -70,6 +70,12 @@ class ArenaCameraNode : public rclcpp::Node
   double exposure_time_;
   bool is_passed_exposure_time_;
 
+  double exposure_auto_target_;
+  bool is_passed_exposure_auto_target_;
+
+  double exposure_auto_upper_limit_;
+  bool is_passed_exposure_auto_upper_limit_;
+
   std::string pixelformat_pfnc_;
   std::string pixelformat_ros_;
   bool is_passed_pixelformat_ros_;
