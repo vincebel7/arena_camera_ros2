@@ -39,6 +39,14 @@ void ArenaCameraNode::parse_parameters_()
     exposure_time_ = this->declare_parameter("exposure_time", -1.0);
     is_passed_exposure_time_ = exposure_time_ >= 0;
 
+    nextParameterToDeclare = "target_brightness";
+    target_brightness_ = this->declare_parameter("target_brightness", -1.0);
+    is_passed_target_brightness_ = target_brightness_ >= 0;
+
+    nextParameterToDeclare = "gamma";
+    gamma_ = this->declare_parameter("gamma", -1.0);
+    is_passed_gamma_ = gamma_ >= 0;
+
     nextParameterToDeclare = "trigger_mode";
     trigger_mode_activated_ = this->declare_parameter("trigger_mode", false);
     // no need to is_passed_trigger_mode_ because it is already a boolean
@@ -421,6 +429,8 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_gain_();
   set_nodes_pixelformat_();
   set_nodes_exposure_();
+  set_nodes_target_brightness_();
+  set_nodes_gamma_();
   set_nodes_trigger_mode_();
   // configure Auto Negotiate Packet Size and Packet Resend
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
@@ -517,6 +527,24 @@ void ArenaCameraNode::set_nodes_exposure_()
     auto nodemap = m_pDevice->GetNodeMap();
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Off");
     Arena::SetNodeValue<double>(nodemap, "ExposureTime", exposure_time_);
+  }
+}
+
+void ArenaCameraNode::set_nodes_target_brightness_()
+{
+  if (is_passed_target_brightness_) {
+    auto nodemap = m_pDevice->GetNodeMap();
+    Arena::SetNodeValue<double>(nodemap, "TargetBrightness", target_brightness_);
+    log_info(std::string("\tTargetBrightness set to ") + std::to_string(target_brightness_));
+  }
+}
+
+void ArenaCameraNode::set_nodes_gamma_()
+{
+  if (is_passed_gamma_) {
+    auto nodemap = m_pDevice->GetNodeMap();
+    Arena::SetNodeValue<double>(nodemap, "Gamma", gamma_);
+    log_info(std::string("\tGamma set to ") + std::to_string(gamma_));
   }
 }
 

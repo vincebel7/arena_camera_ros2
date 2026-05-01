@@ -70,6 +70,12 @@ class ArenaCameraNode : public rclcpp::Node
   double exposure_time_;
   bool is_passed_exposure_time_;
 
+  double target_brightness_;
+  bool is_passed_target_brightness_;
+
+  double gamma_;
+  bool is_passed_gamma_;
+
   std::string pixelformat_pfnc_;
   std::string pixelformat_ros_;
   bool is_passed_pixelformat_ros_;
@@ -100,6 +106,8 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_gain_();
   void set_nodes_pixelformat_();
   void set_nodes_exposure_();
+  void set_nodes_target_brightness_();
+  void set_nodes_gamma_();
   void set_nodes_trigger_mode_();
   void set_nodes_test_pattern_image_();
   void publish_images_();
