@@ -86,17 +86,6 @@ Arena Camera deriver for ROS2
           - if trigger_mode is passed to node them it is recommended to set exposure_time as well so the
             triggered images do not take longer than expected.
 
-        - exposure_auto_target
-          - target luminance for the autoexposure algorithm.
-          - only applies when exposure_time is not set (i.e. autoexposure is active).
-          - corresponds to the camera's AutoTargetLuminance node.
-          - typical range: 0.0 to 1.0 (camera-dependent). lower values produce a darker image.
-
-        - exposure_auto_upper_limit
-          - maximum exposure time (in microseconds) the autoexposure algorithm may use.
-          - only applies when exposure_time is not set (i.e. autoexposure is active).
-          - useful for preventing long exposures in dim scenes that make the image too bright or slow.
-
         - trigger_mode
           - puts the device in ready state where it will wait for a `trigger_image` client to request an image.
           - default value is false. It means the device will be publishing images to the

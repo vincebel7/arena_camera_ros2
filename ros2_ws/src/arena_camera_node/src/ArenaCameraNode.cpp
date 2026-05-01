@@ -39,14 +39,6 @@ void ArenaCameraNode::parse_parameters_()
     exposure_time_ = this->declare_parameter("exposure_time", -1.0);
     is_passed_exposure_time_ = exposure_time_ >= 0;
 
-    nextParameterToDeclare = "exposure_auto_target";
-    exposure_auto_target_ = this->declare_parameter("exposure_auto_target", -1.0);
-    is_passed_exposure_auto_target_ = exposure_auto_target_ >= 0;
-
-    nextParameterToDeclare = "exposure_auto_upper_limit";
-    exposure_auto_upper_limit_ = this->declare_parameter("exposure_auto_upper_limit", -1.0);
-    is_passed_exposure_auto_upper_limit_ = exposure_auto_upper_limit_ > 0;
-
     nextParameterToDeclare = "trigger_mode";
     trigger_mode_activated_ = this->declare_parameter("trigger_mode", false);
     // no need to is_passed_trigger_mode_ because it is already a boolean
@@ -521,24 +513,10 @@ void ArenaCameraNode::set_nodes_pixelformat_()
 
 void ArenaCameraNode::set_nodes_exposure_()
 {
-  auto nodemap = m_pDevice->GetNodeMap();
-
   if (is_passed_exposure_time_) {
+    auto nodemap = m_pDevice->GetNodeMap();
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Off");
     Arena::SetNodeValue<double>(nodemap, "ExposureTime", exposure_time_);
-  } else {
-    if (is_passed_exposure_auto_upper_limit_) {
-      Arena::SetNodeValue<double>(nodemap, "ExposureAutoUpperLimit",
-                                 exposure_auto_upper_limit_);
-      log_info(std::string("\tExposureAutoUpperLimit set to ") +
-               std::to_string(exposure_auto_upper_limit_) + " us");
-    }
-    if (is_passed_exposure_auto_target_) {
-      Arena::SetNodeValue<double>(nodemap, "AutoTargetLuminance",
-                                 exposure_auto_target_);
-      log_info(std::string("\tAutoTargetLuminance set to ") +
-               std::to_string(exposure_auto_target_));
-    }
   }
 }
 
