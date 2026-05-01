@@ -70,7 +70,7 @@ class ArenaCameraNode : public rclcpp::Node
   double exposure_time_;
   bool is_passed_exposure_time_;
 
-  double target_brightness_;
+  int64_t target_brightness_;
   bool is_passed_target_brightness_;
 
   double gamma_;

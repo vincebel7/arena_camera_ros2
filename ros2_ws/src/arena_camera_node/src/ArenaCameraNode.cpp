@@ -40,7 +40,7 @@ void ArenaCameraNode::parse_parameters_()
     is_passed_exposure_time_ = exposure_time_ >= 0;
 
     nextParameterToDeclare = "target_brightness";
-    target_brightness_ = this->declare_parameter("target_brightness", -1.0);
+    target_brightness_ = this->declare_parameter("target_brightness", -1);
     is_passed_target_brightness_ = target_brightness_ >= 0;
 
     nextParameterToDeclare = "gamma";
@@ -535,7 +535,7 @@ void ArenaCameraNode::set_nodes_target_brightness_()
   if (is_passed_target_brightness_) {
     auto nodemap = m_pDevice->GetNodeMap();
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Continuous");
-    Arena::SetNodeValue<double>(nodemap, "TargetBrightness", target_brightness_);
+    Arena::SetNodeValue<int64_t>(nodemap, "TargetBrightness", target_brightness_);
     log_info(std::string("\tTargetBrightness set to ") + std::to_string(target_brightness_));
   }
 }
