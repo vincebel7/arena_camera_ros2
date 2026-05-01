@@ -81,7 +81,7 @@ Arena Camera deriver for ROS2
 
         - target_brightness
           - the target brightness value used by the autoexposure algorithm (Acquisition Control).
-          - a double value in the range supported by the camera (typically 0 to 255).
+          - an integer value in the range supported by the camera (typically 0 to 255).
           - if not provided, the camera's default value is used.
 
         - gamma
@@ -139,7 +139,7 @@ Arena Camera deriver for ROS2
 
         # simple example for using arguments together
 
-          `ros2 run arena_camera_node start --ros-args -p serial:="904240001" -p topic:=/special_images -p camera_name:=rear_cam -p width:=100 -p height:=200 -p pixelformat:=rgb8 -p gain:=10 -p exposure_time:=150 -p target_brightness:=70.0 -p gamma:=1.0 -p trigger_mode:=true` 
+          `ros2 run arena_camera_node start --ros-args -p serial:="904240001" -p topic:=/special_images -p camera_name:=rear_cam -p width:=100 -p height:=200 -p pixelformat:=rgb8 -p gain:=10 -p exposure_time:=150 -p target_brightness:=70 -p gamma:=1.0 -p trigger_mode:=true` 
 
 - explore excutables
 
