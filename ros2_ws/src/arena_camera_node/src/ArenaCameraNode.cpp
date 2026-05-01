@@ -534,6 +534,7 @@ void ArenaCameraNode::set_nodes_target_brightness_()
 {
   if (is_passed_target_brightness_) {
     auto nodemap = m_pDevice->GetNodeMap();
+    Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Continuous");
     Arena::SetNodeValue<double>(nodemap, "TargetBrightness", target_brightness_);
     log_info(std::string("\tTargetBrightness set to ") + std::to_string(target_brightness_));
   }
