@@ -36,7 +36,18 @@ class ArenaCameraNode : public rclcpp::Node
 
   ~ArenaCameraNode()
   {
-    log_info(std::string("Destroying \"") + this->get_name() + "\" node");
+    log_info("Destroying node");
+    if (m_pDevice) {
+      try {
+        m_pDevice->StopStream();
+      } catch (...) {}
+      m_pSystem->DestroyDevice(m_pDevice.get());
+      m_pDevice = nullptr;
+    }
+    if (m_pSystem) {
+      Arena::CloseSystem(m_pSystem.get());
+      m_pSystem = nullptr;
+    }
   }
 
   void log_debug(std::string msg) { RCLCPP_DEBUG(this->get_logger(), msg.c_str()); };
