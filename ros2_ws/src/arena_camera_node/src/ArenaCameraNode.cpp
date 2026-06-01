@@ -251,6 +251,7 @@ void ArenaCameraNode::publish_images_()
       log_info(std::string("image ") + std::to_string(pImage->GetFrameId()) +
                " published to " + topic_);
       this->m_pDevice->RequeueBuffer(pImage);
+      pImage = nullptr;
 
     } catch (std::exception& e) {
       if (pImage) {
