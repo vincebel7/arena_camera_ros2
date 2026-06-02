@@ -253,13 +253,20 @@ void ArenaCameraNode::publish_images_()
       this->m_pDevice->RequeueBuffer(pImage);
       pImage = nullptr;
 
+    } catch (GenICam::GenericException& e) {
+      if (pImage) {
+        this->m_pDevice->RequeueBuffer(pImage);
+        pImage = nullptr;
+      }
+      log_warn(std::string("GenICam exception while publishing an image\n") +
+               e.what());
     } catch (std::exception& e) {
       if (pImage) {
         this->m_pDevice->RequeueBuffer(pImage);
         pImage = nullptr;
-        log_warn(std::string("Exception occurred while publishing an image\n") +
-                 e.what());
       }
+      log_warn(std::string("Exception occurred while publishing an image\n") +
+               e.what());
     }
   };
 }
