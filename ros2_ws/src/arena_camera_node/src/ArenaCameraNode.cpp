@@ -51,6 +51,9 @@ void ArenaCameraNode::parse_parameters_()
     trigger_mode_activated_ = this->declare_parameter("trigger_mode", false);
     // no need to is_passed_trigger_mode_ because it is already a boolean
 
+    nextParameterToDeclare = "frame_rate";
+    frame_rate_ = this->declare_parameter("frame_rate", 30.0);
+
     nextParameterToDeclare = "camera_name";
     camera_name_ = this->declare_parameter("camera_name", "arena_camera");
     // no need to is_passed_camera_name_
@@ -440,6 +443,8 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_target_brightness_();
   set_nodes_gamma_();
   set_nodes_trigger_mode_();
+  set_nodes_ptp_();
+  set_nodes_frame_rate_();
   // configure Auto Negotiate Packet Size and Packet Resend
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
@@ -592,6 +597,22 @@ void ArenaCameraNode::set_nodes_trigger_mode_()
   else {
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "TriggerMode", "Off");
   }
+}
+
+void ArenaCameraNode::set_nodes_ptp_()
+{
+  auto nodemap = m_pDevice->GetNodeMap();
+  Arena::SetNodeValue<bool>(nodemap, "PtpEnable", true);
+  Arena::SetNodeValue<bool>(nodemap, "PtpSlaveOnly", true);
+  log_info("\tPTP enabled (slave-only mode)");
+}
+
+void ArenaCameraNode::set_nodes_frame_rate_()
+{
+  auto nodemap = m_pDevice->GetNodeMap();
+  Arena::SetNodeValue<bool>(nodemap, "AcquisitionFrameRateEnable", true);
+  Arena::SetNodeValue<double>(nodemap, "AcquisitionFrameRate", frame_rate_);
+  log_info(std::string("\tAcquisitionFrameRate set to ") + std::to_string(frame_rate_));
 }
 
 // just for debugging

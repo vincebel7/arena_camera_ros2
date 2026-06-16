@@ -93,6 +93,8 @@ class ArenaCameraNode : public rclcpp::Node
 
   bool trigger_mode_activated_;
 
+  double frame_rate_;
+
   std::string pub_qos_history_;
   bool is_passed_pub_qos_history_;
 
@@ -120,6 +122,8 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_target_brightness_();
   void set_nodes_gamma_();
   void set_nodes_trigger_mode_();
+  void set_nodes_ptp_();
+  void set_nodes_frame_rate_();
   void set_nodes_test_pattern_image_();
   void publish_images_();
 
