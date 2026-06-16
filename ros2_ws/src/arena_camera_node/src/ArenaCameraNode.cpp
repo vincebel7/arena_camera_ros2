@@ -233,6 +233,11 @@ void ArenaCameraNode::run_()
   set_nodes_();
   m_pDevice->StartStream();
 
+  if (is_passed_target_brightness_) {
+    Arena::SetNodeValue<GenICam::gcstring>(m_pDevice->GetNodeMap(), "ExposureAuto", "Once");
+    log_info("\tExposureAuto set to Once (will lock after convergence)");
+  }
+
   if (!trigger_mode_activated_) {
     publish_images_();
   } else {
@@ -547,7 +552,7 @@ void ArenaCameraNode::set_nodes_target_brightness_()
 {
   if (is_passed_target_brightness_) {
     auto nodemap = m_pDevice->GetNodeMap();
-    Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Once");
+    Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Continuous");
     Arena::SetNodeValue<int64_t>(nodemap, "TargetBrightness", target_brightness_);
     log_info(std::string("\tTargetBrightness set to ") + std::to_string(target_brightness_));
   }
