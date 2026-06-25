@@ -89,9 +89,6 @@ class ArenaCameraNode : public rclcpp::Node
   std::atomic<bool> m_ptp_locked_{false};
   // Serializes manual (/trigger_all) and continuous-timer fires.
   std::mutex m_fire_mutex_;
-  // Running anchor for stepped continuous scheduling (RTK/PTP nanoseconds).
-  int64_t m_next_action_time_ns_ = 0;
-  bool m_continuous_anchor_valid_ = false;
 
   std::string serial_;
   bool is_passed_serial_;

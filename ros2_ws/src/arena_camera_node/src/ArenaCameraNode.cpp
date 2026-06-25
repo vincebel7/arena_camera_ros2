@@ -460,28 +460,18 @@ void ArenaCameraNode::fire_scheduled_action_command_(bool single_shot)
         ((curr_ptp / one_second_ns) + 1) * one_second_ns;
     exec_time_ns = next_second + lead_ns;
   } else {
-    // Continuous: step the execute time by a fixed period so the six cameras
-    // fire on identical, evenly spaced action commands. Re-anchor to a whole
-    // second if we have no anchor yet or have fallen behind real PTP time.
-    const int64_t period_ns =
-        action_trigger_rate_ > 0.0
-            ? static_cast<int64_t>(1e9 / action_trigger_rate_)
-            : one_second_ns;
-    const int64_t earliest = curr_ptp + lead_ns;
-    if (!m_continuous_anchor_valid_) {
-      const int64_t next_second =
-          ((curr_ptp / one_second_ns) + 1) * one_second_ns;
-      m_next_action_time_ns_ = next_second + lead_ns;
-      m_continuous_anchor_valid_ = true;
-    } else {
-      m_next_action_time_ns_ += period_ns;
-      if (m_next_action_time_ns_ < earliest) {
-        const int64_t next_second =
-            ((curr_ptp / one_second_ns) + 1) * one_second_ns;
-        m_next_action_time_ns_ = next_second + lead_ns;
-      }
-    }
-    exec_time_ns = m_next_action_time_ns_;
+    // Continuous: schedule just `lead` ahead of the freshly latched time so at
+    // most ONE scheduled action command is pending at the camera. Cameras hold
+    // a single pending scheduled action, so a large lead (e.g. rounding to the
+    // next whole second) backlogs commands that then get dropped, throttling
+    // the rate. Inter-frame spacing follows the trigger timer period; every
+    // shot is still PTP-synchronized across all cameras (they all receive the
+    // same single broadcast with the same execute time).
+    //
+    // lead must exceed the worst-case latch+fire+network latency or the command
+    // arrives after its execute time and is ignored. If you see dropped frames
+    // at high rates, raise action_lead_time (keeping it below 1/rate).
+    exec_time_ns = curr_ptp + lead_ns;
   }
 
   // Configure and fire the broadcast action command on the system nodemap.
