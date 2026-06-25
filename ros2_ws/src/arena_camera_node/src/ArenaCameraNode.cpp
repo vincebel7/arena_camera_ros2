@@ -90,6 +90,16 @@ void ArenaCameraNode::parse_parameters_()
     nextParameterToDeclare = "ptp_lock_timeout";
     ptp_lock_timeout_sec_ = this->declare_parameter("ptp_lock_timeout", 60.0);
 
+    // GigE Vision transmission shaping. gev_scftd staggers per-camera frame
+    // transmission so synchronized frames do not all arrive at the host at once
+    // (helps high-rate multi-camera recording); gev_scpd spaces out packets.
+    // 0 = leave the camera default. These affect transmission only, not capture.
+    nextParameterToDeclare = "gev_scpd";
+    gev_scpd_ = this->declare_parameter<int64_t>("gev_scpd", 0);
+
+    nextParameterToDeclare = "gev_scftd";
+    gev_scftd_ = this->declare_parameter<int64_t>("gev_scftd", 0);
+
     nextParameterToDeclare = "camera_name";
     camera_name_ = this->declare_parameter("camera_name", "arena_camera");
     // no need to is_passed_camera_name_
@@ -734,6 +744,7 @@ void ArenaCameraNode::set_nodes_()
   // configure Auto Negotiate Packet Size and Packet Resend
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
+  set_nodes_transmission_delay_();
 
   //set_nodes_test_pattern_image_();
 }
@@ -964,6 +975,40 @@ void ArenaCameraNode::set_nodes_frame_rate_()
   Arena::SetNodeValue<bool>(nodemap, "AcquisitionFrameRateEnable", true);
   Arena::SetNodeValue<double>(nodemap, "AcquisitionFrameRate", frame_rate_);
   log_info(std::string("\tAcquisitionFrameRate set to ") + std::to_string(frame_rate_));
+}
+
+void ArenaCameraNode::set_nodes_transmission_delay_()
+{
+  // GigE Vision stream-channel transmission shaping. Staggering gev_scftd
+  // per-camera spreads when each camera transmits its already-captured frame so
+  // the six synchronized frames do not all arrive at the host at the same
+  // instant (which overflows the receive buffers at high rates). This shapes
+  // TRANSMISSION only: exposure/capture stays driven by the shared trigger, so
+  // the PTP capture timestamp (header.stamp) and cross-camera sync are
+  // unchanged. Defaults of 0 leave the camera at its normal behavior.
+  //
+  // [verify] GevSCPD / GevSCFTD node names, nodemap, and units on the vehicle
+  // SDK (LUCID Arena typically exposes these on the device nodemap; units are
+  // commonly nanoseconds). Guarded so a missing/read-only node is non-fatal.
+  auto nodemap = m_pDevice->GetNodeMap();
+  if (gev_scpd_ > 0) {
+    try {
+      Arena::SetNodeValue<int64_t>(nodemap, "GevSCPD", gev_scpd_);
+      log_info(std::string("\tGevSCPD (packet delay) set to ") +
+               std::to_string(gev_scpd_));
+    } catch (GenICam::GenericException& e) {
+      log_warn(std::string("\tcould not set GevSCPD: ") + e.what());
+    }
+  }
+  if (gev_scftd_ > 0) {
+    try {
+      Arena::SetNodeValue<int64_t>(nodemap, "GevSCFTD", gev_scftd_);
+      log_info(std::string("\tGevSCFTD (frame transmission delay) set to ") +
+               std::to_string(gev_scftd_));
+    } catch (GenICam::GenericException& e) {
+      log_warn(std::string("\tcould not set GevSCFTD: ") + e.what());
+    }
+  }
 }
 
 // just for debugging

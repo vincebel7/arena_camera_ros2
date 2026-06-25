@@ -133,6 +133,12 @@ class ArenaCameraNode : public rclcpp::Node
   int64_t action_get_image_timeout_ms_; // GetImage timeout in action loop
   int64_t ptp_domain_;                  // applied only when non-zero
   double ptp_lock_timeout_sec_;         // max wait for PtpStatus == "Slave"
+  // GigE Vision stream-channel transmission shaping (0 = leave camera default).
+  // Used to stagger when each camera transmits its already-captured frame so
+  // the six synchronized frames do not all hit the host at once. Affects
+  // TRANSMISSION only, not exposure/capture, so header.stamp sync is unchanged.
+  int64_t gev_scpd_;                    // packet delay
+  int64_t gev_scftd_;                   // frame-transmission delay (per-camera)
 
   std::string pub_qos_history_;
   bool is_passed_pub_qos_history_;
@@ -164,6 +170,7 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_action_trigger_mode_();
   void set_nodes_ptp_();
   void set_nodes_frame_rate_();
+  void set_nodes_transmission_delay_();
   void set_nodes_test_pattern_image_();
   void publish_images_();
   // Action-mode acquisition loop (runs in m_acquisition_thread_).
