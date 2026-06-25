@@ -48,6 +48,10 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(arena_sdk REQUIRED)
+# trigger_mode runs the synchronized-capture acquisition loop in a std::thread;
+# ensure the threading library is linked explicitly (in addition to what rclcpp
+# propagates).
+find_package(Threads REQUIRED)
 
 # ------------
 # EXPORT DEPS
@@ -138,12 +142,15 @@ add_executable(${target_name}
 # ROS DEP
 # - this way, it will find our header libs automatically
 # - for Arenasdk the cmake way is used no ament
-ament_target_dependencies(${target_name}  rclcpp 
-                                          std_msgs 
+ament_target_dependencies(${target_name}  rclcpp
+                                          std_msgs
                                           std_srvs
                                           sensor_msgs
                                           arena_sdk
                                           )
+
+# std::thread / std::mutex used by the synchronized trigger_mode acquisition
+target_link_libraries(${target_name} Threads::Threads)
 
 
 # MV EXEC to lib dir

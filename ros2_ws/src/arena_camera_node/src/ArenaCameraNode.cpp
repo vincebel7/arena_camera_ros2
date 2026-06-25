@@ -1,3 +1,4 @@
+#include <algorithm>  // std::max (ptp-lock attempt count)
 #include <cstring>    // memcopy
 #include <stdexcept>  // std::runtime_err
 #include <string>
@@ -53,6 +54,41 @@ void ArenaCameraNode::parse_parameters_()
 
     nextParameterToDeclare = "frame_rate";
     frame_rate_ = this->declare_parameter("frame_rate", 30.0);
+
+    // -- synchronized (PTP + scheduled GigE Vision Action Command) triggering --
+    // When trigger_mode is true the cameras capture on TriggerSource=Action0.
+    // action_master designates the single node that broadcasts the action
+    // command. The device/group key/mask MUST be identical on all six cameras
+    // and on the fire command.
+    nextParameterToDeclare = "action_master";
+    action_master_ = this->declare_parameter("action_master", false);
+
+    nextParameterToDeclare = "action_device_key";
+    action_device_key_ =
+        this->declare_parameter<int64_t>("action_device_key", 1);
+
+    nextParameterToDeclare = "action_group_key";
+    action_group_key_ = this->declare_parameter<int64_t>("action_group_key", 1);
+
+    nextParameterToDeclare = "action_group_mask";
+    action_group_mask_ =
+        this->declare_parameter<int64_t>("action_group_mask", 1);
+
+    nextParameterToDeclare = "action_lead_time";
+    action_lead_time_ = this->declare_parameter("action_lead_time", 0.05);
+
+    nextParameterToDeclare = "action_trigger_rate";
+    action_trigger_rate_ = this->declare_parameter("action_trigger_rate", 0.0);
+
+    nextParameterToDeclare = "action_get_image_timeout";
+    action_get_image_timeout_ms_ =
+        this->declare_parameter<int64_t>("action_get_image_timeout", 1000);
+
+    nextParameterToDeclare = "ptp_domain";
+    ptp_domain_ = this->declare_parameter<int64_t>("ptp_domain", 0);
+
+    nextParameterToDeclare = "ptp_lock_timeout";
+    ptp_lock_timeout_sec_ = this->declare_parameter("ptp_lock_timeout", 60.0);
 
     nextParameterToDeclare = "camera_name";
     camera_name_ = this->declare_parameter("camera_name", "arena_camera");
@@ -121,6 +157,22 @@ void ArenaCameraNode::initialize_()
   m_trigger_an_image_srv_ = this->create_service<std_srvs::srv::Trigger>(
       std::string(this->get_name()) + "/trigger_image",
       std::bind(&ArenaCameraNode::publish_an_image_on_trigger_, this, _1, _2));
+
+  //
+  // TRIGGER ALL (service) --------------------------------------------------
+  //
+  // Only the designated action master exposes /trigger_all. The name is
+  // absolute (leading '/') so a single node owns it; the broadcast action
+  // command it sends reaches every camera. Creating it only on the master
+  // avoids the collision that would happen if all six nodes registered it.
+  if (trigger_mode_activated_ && action_master_) {
+    m_trigger_all_srv_ = this->create_service<std_srvs::srv::Trigger>(
+        "/trigger_all",
+        std::bind(&ArenaCameraNode::trigger_all_callback_, this, _1, _2));
+    log_info(
+        "\taction master: /trigger_all service is ready (fires one "
+        "synchronized shot across all cameras)");
+  }
 
   //
   // Publisher --------------------------------------------------------------
@@ -239,9 +291,27 @@ void ArenaCameraNode::run_()
   }
 
   if (!trigger_mode_activated_) {
+    // free-run: blocking publish loop, exactly as before.
     publish_images_();
   } else {
-    // else ros::spin will
+    // trigger_mode=true: synchronized capture via PTP + scheduled action
+    // commands. Frames arrive only when a scheduled action command fires, so
+    // run the GetImage/publish loop in a background thread; the node keeps
+    // spinning to serve /trigger_all (master) and the continuous timer.
+    m_stop_acquisition_ = false;
+    m_acquisition_thread_ =
+        std::thread(&ArenaCameraNode::publish_images_action_, this);
+
+    if (action_master_ && action_trigger_rate_ > 0.0) {
+      auto period_ns = std::chrono::nanoseconds(
+          static_cast<int64_t>(1e9 / action_trigger_rate_));
+      m_continuous_trigger_timer_ = this->create_wall_timer(
+          period_ns,
+          std::bind(&ArenaCameraNode::continuous_trigger_timer_callback_,
+                    this));
+      log_info(std::string("\tcontinuous action triggering enabled at ") +
+               std::to_string(action_trigger_rate_) + " Hz");
+    }
   }
 }
 
@@ -277,6 +347,217 @@ void ArenaCameraNode::publish_images_()
                e.what());
     }
   };
+}
+
+void ArenaCameraNode::publish_images_action_()
+{
+  // Action-mode acquisition loop. Frames arrive only when a scheduled action
+  // command fires, so GetImage() routinely times out while idle; those
+  // timeouts are expected and swallowed quietly to avoid log spam.
+  Arena::IImage* pImage = nullptr;
+  while (rclcpp::ok() && !m_stop_acquisition_) {
+    try {
+      pImage = m_pDevice->GetImage(
+          static_cast<uint64_t>(action_get_image_timeout_ms_));
+      auto p_image_msg = std::make_unique<sensor_msgs::msg::Image>();
+      msg_form_image_(pImage, *p_image_msg);
+      m_pub_->publish(std::move(p_image_msg));
+      log_info(std::string("image ") + std::to_string(pImage->GetFrameId()) +
+               " published to " + topic_);
+      m_pDevice->RequeueBuffer(pImage);
+      pImage = nullptr;
+    } catch (GenICam::TimeoutException&) {
+      // [verify] GenICam::TimeoutException is the standard Arena/LUCID type
+      // thrown by GetImage() on timeout. Expected between triggers -> keep
+      // waiting quietly. No buffer was handed out, so nothing to requeue.
+      continue;
+    } catch (GenICam::GenericException& e) {
+      if (pImage) {
+        m_pDevice->RequeueBuffer(pImage);
+        pImage = nullptr;
+      }
+      log_warn(std::string("GenICam exception in action acquisition loop\n") +
+               e.what());
+    } catch (std::exception& e) {
+      if (pImage) {
+        m_pDevice->RequeueBuffer(pImage);
+        pImage = nullptr;
+      }
+      log_warn(std::string("Exception in action acquisition loop\n") +
+               e.what());
+    }
+  }
+}
+
+bool ArenaCameraNode::wait_for_ptp_lock_()
+{
+  if (m_ptp_locked_) {
+    return true;
+  }
+  auto nodemap = m_pDevice->GetNodeMap();
+
+  // "Settled" is approximated by a sustained run of consecutive "Slave" reads
+  // (PTP can briefly report Slave before the offset converges).
+  const int required_consecutive = 5;
+  const auto poll_interval = std::chrono::milliseconds(500);
+  const int max_attempts =
+      std::max(1, static_cast<int>((ptp_lock_timeout_sec_ * 1000.0) /
+                                   static_cast<double>(poll_interval.count())));
+
+  int consecutive = 0;
+  for (int attempt = 0; attempt < max_attempts && rclcpp::ok(); ++attempt) {
+    std::string status;
+    try {
+      // [verify] PtpStatus enum string "Slave" on the vehicle SDK.
+      status = Arena::GetNodeValue<GenICam::gcstring>(nodemap, "PtpStatus");
+    } catch (GenICam::GenericException& e) {
+      log_warn(std::string("could not read PtpStatus: ") + e.what());
+    }
+
+    if (status == "Slave") {
+      if (++consecutive >= required_consecutive) {
+        m_ptp_locked_ = true;
+        log_info(
+            "PTP locked: this camera reports 'Slave' (synchronized to the RTK "
+            "grandmaster)");
+        return true;
+      }
+    } else {
+      consecutive = 0;
+      log_info(std::string("waiting for PTP lock; PtpStatus=") + status);
+    }
+    std::this_thread::sleep_for(poll_interval);
+  }
+
+  log_err(
+      "PTP did not settle on 'Slave' within ptp_lock_timeout; refusing to fire "
+      "the action command. Check the grandmaster (RTK), the PTP domain, and "
+      "the switch.");
+  return false;
+}
+
+void ArenaCameraNode::fire_scheduled_action_command_(bool single_shot)
+{
+  std::lock_guard<std::mutex> lock(m_fire_mutex_);
+
+  auto deviceNodeMap = m_pDevice->GetNodeMap();
+  auto systemNodeMap = m_pSystem->GetTLSystemNodeMap();
+
+  // Latch this device's current PTP time (disciplined to the RTK GPS
+  // grandmaster) and read it back in nanoseconds.
+  Arena::ExecuteNode(deviceNodeMap, "PtpDataSetLatch");
+  const int64_t curr_ptp =
+      Arena::GetNodeValue<int64_t>(deviceNodeMap, "PtpDataSetLatchValue");
+
+  const int64_t lead_ns = static_cast<int64_t>(action_lead_time_ * 1e9);
+  const int64_t one_second_ns = 1000000000LL;
+
+  int64_t exec_time_ns;
+  if (single_shot) {
+    // Round the latched time UP to the next whole second, then add the lead so
+    // even a latch landing just before a second boundary keeps full margin.
+    const int64_t next_second =
+        ((curr_ptp / one_second_ns) + 1) * one_second_ns;
+    exec_time_ns = next_second + lead_ns;
+  } else {
+    // Continuous: step the execute time by a fixed period so the six cameras
+    // fire on identical, evenly spaced action commands. Re-anchor to a whole
+    // second if we have no anchor yet or have fallen behind real PTP time.
+    const int64_t period_ns =
+        action_trigger_rate_ > 0.0
+            ? static_cast<int64_t>(1e9 / action_trigger_rate_)
+            : one_second_ns;
+    const int64_t earliest = curr_ptp + lead_ns;
+    if (!m_continuous_anchor_valid_) {
+      const int64_t next_second =
+          ((curr_ptp / one_second_ns) + 1) * one_second_ns;
+      m_next_action_time_ns_ = next_second + lead_ns;
+      m_continuous_anchor_valid_ = true;
+    } else {
+      m_next_action_time_ns_ += period_ns;
+      if (m_next_action_time_ns_ < earliest) {
+        const int64_t next_second =
+            ((curr_ptp / one_second_ns) + 1) * one_second_ns;
+        m_next_action_time_ns_ = next_second + lead_ns;
+      }
+    }
+    exec_time_ns = m_next_action_time_ns_;
+  }
+
+  // Configure and fire the broadcast action command on the system nodemap.
+  // [verify] the six ActionCommand* system-nodemap node names on the vehicle
+  // SDK. The keys/mask MUST match what every camera was configured with.
+  Arena::SetNodeValue<int64_t>(systemNodeMap, "ActionCommandDeviceKey",
+                               action_device_key_);
+  Arena::SetNodeValue<int64_t>(systemNodeMap, "ActionCommandGroupKey",
+                               action_group_key_);
+  Arena::SetNodeValue<int64_t>(systemNodeMap, "ActionCommandGroupMask",
+                               action_group_mask_);
+  // Broadcast to every camera on the subnet.
+  Arena::SetNodeValue<int64_t>(systemNodeMap, "ActionCommandTargetIP",
+                               static_cast<int64_t>(0xFFFFFFFF));
+  Arena::SetNodeValue<int64_t>(systemNodeMap, "ActionCommandExecuteTime",
+                               exec_time_ns);
+  Arena::ExecuteNode(systemNodeMap, "ActionCommandFireCommand");
+
+  log_info(std::string("fired scheduled action command: exec_time(ns, RTK)=") +
+           std::to_string(exec_time_ns) +
+           " latched_ptp(ns)=" + std::to_string(curr_ptp) +
+           (single_shot ? " [single shot]" : " [continuous]"));
+}
+
+void ArenaCameraNode::trigger_all_callback_(
+    std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  if (!trigger_mode_activated_ || !action_master_) {
+    response->success = false;
+    response->message =
+        "this node is not the action master (needs trigger_mode:=true and "
+        "action_master:=true)";
+    log_warn(response->message);
+    return;
+  }
+
+  if (!wait_for_ptp_lock_()) {
+    response->success = false;
+    response->message = "PTP is not locked; refusing to fire";
+    return;
+  }
+
+  try {
+    fire_scheduled_action_command_(true);
+    response->success = true;
+    response->message =
+        "scheduled action command fired (single synchronized shot)";
+    log_info(response->message);
+  } catch (GenICam::GenericException& e) {
+    response->success = false;
+    response->message =
+        std::string("GenICam exception while firing action command: ") +
+        e.what();
+    log_warn(response->message);
+  } catch (std::exception& e) {
+    response->success = false;
+    response->message =
+        std::string("exception while firing action command: ") + e.what();
+    log_warn(response->message);
+  }
+}
+
+void ArenaCameraNode::continuous_trigger_timer_callback_()
+{
+  if (!wait_for_ptp_lock_()) {
+    log_warn("continuous trigger: PTP not locked yet; skipping this tick");
+    return;
+  }
+  try {
+    fire_scheduled_action_command_(false);
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("continuous fire GenICam exception: ") + e.what());
+  } catch (std::exception& e) {
+    log_warn(std::string("continuous fire exception: ") + e.what());
+  }
 }
 
 void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
@@ -447,9 +728,19 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_exposure_();
   set_nodes_target_brightness_();
   set_nodes_gamma_();
-  set_nodes_trigger_mode_();
-  set_nodes_ptp_();
-  set_nodes_frame_rate_();
+  if (trigger_mode_activated_) {
+    // trigger_mode=true: synchronized capture via PTP + scheduled GigE Vision
+    // action commands. The action command gates every frame, so the free-run
+    // AcquisitionFrameRate is intentionally NOT enabled here (see
+    // set_nodes_action_trigger_mode_()).
+    set_nodes_action_trigger_mode_();
+    set_nodes_ptp_();
+  } else {
+    // trigger_mode=false: free-run, exactly as before.
+    set_nodes_trigger_mode_();
+    set_nodes_ptp_();
+    set_nodes_frame_rate_();
+  }
   // configure Auto Negotiate Packet Size and Packet Resend
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
   Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
@@ -604,11 +895,76 @@ void ArenaCameraNode::set_nodes_trigger_mode_()
   }
 }
 
+void ArenaCameraNode::set_nodes_action_trigger_mode_()
+{
+  auto nodemap = m_pDevice->GetNodeMap();
+
+  if (exposure_time_ < 0) {
+    log_warn(
+        "\ttrigger_mode (synchronized): no fixed exposure_time provided. A "
+        "fixed (bounded) exposure is recommended for deterministic "
+        "synchronized capture under triggering.");
+  }
+
+  // Trigger configuration: capture exactly one frame per scheduled action
+  // command. Select the trigger first, then enable it and route it to Action0.
+  Arena::SetNodeValue<GenICam::gcstring>(nodemap, "TriggerSelector",
+                                         "FrameStart");
+  Arena::SetNodeValue<GenICam::gcstring>(nodemap, "TriggerMode", "On");
+  Arena::SetNodeValue<GenICam::gcstring>(nodemap, "TriggerSource", "Action0");
+
+  // Action command configuration. These keys/mask MUST be identical on all six
+  // cameras and on the fire command (see fire_scheduled_action_command_()).
+  Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ActionUnconditionalMode",
+                                         "On");
+  Arena::SetNodeValue<int64_t>(nodemap, "ActionSelector", 0);
+  Arena::SetNodeValue<int64_t>(nodemap, "ActionDeviceKey", action_device_key_);
+  Arena::SetNodeValue<int64_t>(nodemap, "ActionGroupKey", action_group_key_);
+  Arena::SetNodeValue<int64_t>(nodemap, "ActionGroupMask", action_group_mask_);
+
+  // The scheduled action command fully gates acquisition; do not also cap the
+  // free-run acquisition frame rate (which could silently drop triggered
+  // frames). Guarded because the node may be read-only in some device states.
+  try {
+    Arena::SetNodeValue<bool>(nodemap, "AcquisitionFrameRateEnable", false);
+  } catch (GenICam::GenericException&) {
+    // not fatal; leave the camera's default frame-rate gating in place
+  }
+
+  log_info(
+      std::string(
+          "\ttrigger_mode activated (synchronized): TriggerSource=Action0 "
+          "(scheduled GigE Vision action commands). device_key=") +
+      std::to_string(action_device_key_) +
+      " group_key=" + std::to_string(action_group_key_) +
+      " group_mask=" + std::to_string(action_group_mask_));
+}
+
 void ArenaCameraNode::set_nodes_ptp_()
 {
   auto nodemap = m_pDevice->GetNodeMap();
   Arena::SetNodeValue<bool>(nodemap, "PtpEnable", true);
   Arena::SetNodeValue<bool>(nodemap, "PtpSlaveOnly", true);
+  // The PTP domain must match the grandmaster (OXTS RTK) and the switch.
+  // Default (0) leaves the camera at its default assumption, so the original
+  // behavior is unchanged. A non-zero value is attempted in a try/catch since
+  // not every LUCID model exposes a writable domain node.
+  if (ptp_domain_ != 0) {
+    try {
+      // [verify] node name on the vehicle's Arena SDK; many LUCID models
+      // assume domain 0 and may not expose a writable PTP domain node.
+      Arena::SetNodeValue<int64_t>(nodemap, "PtpDomainNumber", ptp_domain_);
+      log_info(std::string("\tPTP domain set to ") +
+               std::to_string(ptp_domain_));
+    } catch (GenICam::GenericException& e) {
+      log_warn(
+          std::string(
+              "\tcould not set PTP domain (camera may not expose a writable "
+              "domain node); ensure RTK/switch/cameras all use the same PTP "
+              "domain. ") +
+          e.what());
+    }
+  }
   log_info("\tPTP enabled (slave-only mode)");
 }
 

@@ -8,8 +8,12 @@
 //
 
 // std
+#include <atomic>      // std::atomic (acquisition-thread / ptp-lock flags)
 #include <chrono>      //chrono_literals
+#include <cstdint>     // int64_t (action keys / ptp latch value)
 #include <functional>  // std::bind , std::placeholders
+#include <mutex>       // std::mutex (serialize action-command fires)
+#include <thread>      // std::thread (action-mode acquisition loop)
 
 // ros
 #include <rclcpp/rclcpp.hpp>
@@ -37,6 +41,14 @@ class ArenaCameraNode : public rclcpp::Node
   ~ArenaCameraNode()
   {
     log_info("Destroying node");
+    // Stop the action-mode acquisition loop (if running) before tearing the
+    // stream down. join() returns once the loop's current GetImage() returns
+    // or times out. For non-action nodes the thread is never started, so
+    // joinable() is false and this is a no-op.
+    m_stop_acquisition_ = true;
+    if (m_acquisition_thread_.joinable()) {
+      m_acquisition_thread_.join();
+    }
     if (m_pDevice) {
       try {
         m_pDevice->StopStream();
@@ -62,6 +74,24 @@ class ArenaCameraNode : public rclcpp::Node
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr m_pub_;
   rclcpp::TimerBase::SharedPtr m_wait_for_device_timer_callback_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr m_trigger_an_image_srv_;
+
+  // -- synchronized (PTP + scheduled GigE Vision Action Command) triggering --
+  // Service exposed only on the designated action master; fires one
+  // synchronized shot across all cameras. Absolute name "/trigger_all".
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr m_trigger_all_srv_;
+  // Optional steady-rate continuous triggering (action master only).
+  rclcpp::TimerBase::SharedPtr m_continuous_trigger_timer_;
+  // Action-mode acquisition runs in its own thread so the node can still spin
+  // and serve services while waiting for triggered frames.
+  std::thread m_acquisition_thread_;
+  std::atomic<bool> m_stop_acquisition_{false};
+  // Latched once this device's PtpStatus has settled on "Slave".
+  std::atomic<bool> m_ptp_locked_{false};
+  // Serializes manual (/trigger_all) and continuous-timer fires.
+  std::mutex m_fire_mutex_;
+  // Running anchor for stepped continuous scheduling (RTK/PTP nanoseconds).
+  int64_t m_next_action_time_ns_ = 0;
+  bool m_continuous_anchor_valid_ = false;
 
   std::string serial_;
   bool is_passed_serial_;
@@ -95,6 +125,18 @@ class ArenaCameraNode : public rclcpp::Node
 
   double frame_rate_;
 
+  // -- params for synchronized action-command triggering (used when
+  //    trigger_mode is true; see set_nodes_action_trigger_mode_()) --
+  bool action_master_;                  // exactly one node fires the broadcast
+  int64_t action_device_key_;           // identical on all six cameras
+  int64_t action_group_key_;            // identical on all six cameras
+  int64_t action_group_mask_;           // identical on all six cameras
+  double action_lead_time_;             // seconds added ahead of exec time
+  double action_trigger_rate_;          // Hz; >0 enables continuous triggering
+  int64_t action_get_image_timeout_ms_; // GetImage timeout in action loop
+  int64_t ptp_domain_;                  // applied only when non-zero
+  double ptp_lock_timeout_sec_;         // max wait for PtpStatus == "Slave"
+
   std::string pub_qos_history_;
   bool is_passed_pub_qos_history_;
 
@@ -122,10 +164,25 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_target_brightness_();
   void set_nodes_gamma_();
   void set_nodes_trigger_mode_();
+  void set_nodes_action_trigger_mode_();
   void set_nodes_ptp_();
   void set_nodes_frame_rate_();
   void set_nodes_test_pattern_image_();
   void publish_images_();
+  // Action-mode acquisition loop (runs in m_acquisition_thread_).
+  void publish_images_action_();
+  // Action master only: schedule + broadcast one GigE Vision action command.
+  // single_shot=true rounds up to the next whole second; false steps by the
+  // continuous period.
+  void fire_scheduled_action_command_(bool single_shot);
+  // Block until this device's PtpStatus settles on "Slave" (or timeout).
+  bool wait_for_ptp_lock_();
+  // /trigger_all service handler (one synchronized shot).
+  void trigger_all_callback_(
+      std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  // Continuous-rate timer handler.
+  void continuous_trigger_timer_callback_();
 
   void publish_an_image_on_trigger_(
       std::shared_ptr<std_srvs::srv::Trigger::Request> request,
