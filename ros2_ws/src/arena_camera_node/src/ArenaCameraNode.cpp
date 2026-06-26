@@ -293,11 +293,19 @@ void ArenaCameraNode::run_()
   auto device = create_device_ros_();
   m_pDevice.reset(device);
   set_nodes_();
+  log_info("\tset_nodes_ complete, starting stream...");
   m_pDevice->StartStream();
+  log_info("\tstream started");
 
   if (is_passed_target_brightness_) {
-    Arena::SetNodeValue<GenICam::gcstring>(m_pDevice->GetNodeMap(), "ExposureAuto", "Once");
-    log_info("\tExposureAuto set to Once (will lock after convergence)");
+    try {
+      Arena::SetNodeValue<GenICam::gcstring>(m_pDevice->GetNodeMap(), "ExposureAuto", "Once");
+      log_info("\tExposureAuto set to Once (will lock after convergence)");
+    } catch (GenICam::GenericException& e) {
+      log_warn(std::string("\tcould not set ExposureAuto=Once after stream start: ") + e.what());
+    } catch (...) {
+      log_warn("\tcould not set ExposureAuto=Once after stream start (unknown exception)");
+    }
   }
 
   if (!trigger_mode_activated_) {
@@ -742,8 +750,19 @@ void ArenaCameraNode::set_nodes_()
     set_nodes_frame_rate_();
   }
   // configure Auto Negotiate Packet Size and Packet Resend
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
+  log_info("\tconfiguring TL stream nodes...");
+  try {
+    Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
+    log_info("\t\tStreamAutoNegotiatePacketSize set");
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set StreamAutoNegotiatePacketSize: ") + e.what());
+  } catch (...) {}
+  try {
+    Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
+    log_info("\t\tStreamPacketResendEnable set");
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set StreamPacketResendEnable: ") + e.what());
+  } catch (...) {}
   set_nodes_transmission_delay_();
 
   //set_nodes_test_pattern_image_();

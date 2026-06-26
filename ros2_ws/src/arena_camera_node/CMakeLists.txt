@@ -52,6 +52,7 @@ find_package(arena_sdk REQUIRED)
 # ensure the threading library is linked explicitly (in addition to what rclcpp
 # propagates).
 find_package(Threads REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS calib3d)
 
 # ------------
 # EXPORT DEPS
@@ -151,6 +152,10 @@ ament_target_dependencies(${target_name}  rclcpp
 
 # std::thread / std::mutex used by the synchronized trigger_mode acquisition
 target_link_libraries(${target_name} Threads::Threads)
+
+target_link_libraries(${target_name}
+	${OpenCV_LIBS}
+)
 
 
 # MV EXEC to lib dir
