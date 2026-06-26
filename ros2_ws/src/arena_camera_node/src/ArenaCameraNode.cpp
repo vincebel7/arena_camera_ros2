@@ -100,6 +100,15 @@ void ArenaCameraNode::parse_parameters_()
     nextParameterToDeclare = "gev_scftd";
     gev_scftd_ = this->declare_parameter<int64_t>("gev_scftd", 0);
 
+    nextParameterToDeclare = "mtu";
+    mtu_ = this->declare_parameter<int64_t>("mtu", 1500);
+
+    nextParameterToDeclare = "white_balance_enable";
+    white_balance_enable_ = this->declare_parameter("white_balance_enable", true);
+
+    nextParameterToDeclare = "white_balance_auto";
+    white_balance_auto_ = this->declare_parameter("white_balance_auto", std::string("Continuous"));
+
     nextParameterToDeclare = "camera_name";
     camera_name_ = this->declare_parameter("camera_name", "arena_camera");
     // no need to is_passed_camera_name_
@@ -293,12 +302,9 @@ void ArenaCameraNode::run_()
   auto device = create_device_ros_();
   m_pDevice.reset(device);
   set_nodes_();
+  log_info("\tset_nodes_ complete, starting stream...");
   m_pDevice->StartStream();
-
-  if (is_passed_target_brightness_) {
-    Arena::SetNodeValue<GenICam::gcstring>(m_pDevice->GetNodeMap(), "ExposureAuto", "Once");
-    log_info("\tExposureAuto set to Once (will lock after convergence)");
-  }
+  log_info("\tstream started");
 
   if (!trigger_mode_activated_) {
     // free-run: blocking publish loop, exactly as before.
@@ -742,9 +748,22 @@ void ArenaCameraNode::set_nodes_()
     set_nodes_frame_rate_();
   }
   // configure Auto Negotiate Packet Size and Packet Resend
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
-  Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
+  log_info("\tconfiguring TL stream nodes...");
+  try {
+    Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamAutoNegotiatePacketSize", true);
+    log_info("\t\tStreamAutoNegotiatePacketSize set");
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set StreamAutoNegotiatePacketSize: ") + e.what());
+  } catch (...) {}
+  try {
+    Arena::SetNodeValue<bool>(m_pDevice->GetTLStreamNodeMap(), "StreamPacketResendEnable", true);
+    log_info("\t\tStreamPacketResendEnable set");
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set StreamPacketResendEnable: ") + e.what());
+  } catch (...) {}
   set_nodes_transmission_delay_();
+  set_nodes_mtu_();
+  set_nodes_white_balance_();
 
   //set_nodes_test_pattern_image_();
 }
@@ -1007,6 +1026,42 @@ void ArenaCameraNode::set_nodes_transmission_delay_()
                std::to_string(gev_scftd_));
     } catch (GenICam::GenericException& e) {
       log_warn(std::string("\tcould not set GevSCFTD: ") + e.what());
+    }
+  }
+}
+
+void ArenaCameraNode::set_nodes_mtu_()
+{
+  auto nodemap = m_pDevice->GetNodeMap();
+  try {
+    Arena::SetNodeValue<int64_t>(nodemap, "GevSCPSPacketSize", mtu_);
+    log_info(std::string("\tGevSCPSPacketSize (MTU) set to ") + std::to_string(mtu_));
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set GevSCPSPacketSize: ") + e.what());
+  }
+}
+
+void ArenaCameraNode::set_nodes_white_balance_()
+{
+  auto nodemap = m_pDevice->GetNodeMap();
+
+  // BalanceWhiteEnable is the master toggle. Mono cameras may not expose it.
+  try {
+    Arena::SetNodeValue<bool>(nodemap, "BalanceWhiteEnable", white_balance_enable_);
+    log_info(std::string("\tBalanceWhiteEnable set to ") +
+             (white_balance_enable_ ? "true" : "false"));
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not set BalanceWhiteEnable: ") + e.what());
+  }
+
+  // BalanceWhiteAuto only takes effect when white balance is enabled.
+  if (white_balance_enable_) {
+    try {
+      Arena::SetNodeValue<GenICam::gcstring>(nodemap, "BalanceWhiteAuto",
+                                             white_balance_auto_.c_str());
+      log_info(std::string("\tBalanceWhiteAuto set to ") + white_balance_auto_);
+    } catch (GenICam::GenericException& e) {
+      log_warn(std::string("\tcould not set BalanceWhiteAuto: ") + e.what());
     }
   }
 }
