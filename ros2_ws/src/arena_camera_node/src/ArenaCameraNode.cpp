@@ -731,11 +731,14 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_load_default_profile_();
   set_nodes_roi_();
   set_nodes_gain_();
+  // Apply the flip BEFORE PixelFormat: flipping changes the effective Bayer
+  // order, so the camera must already be reversed for the matching Bayer
+  // PixelFormat (e.g. bayer_bggr8 for a 180 flip of an RGGB sensor) to be valid.
+  set_nodes_reverse_();
   set_nodes_pixelformat_();
   set_nodes_exposure_();
   set_nodes_target_brightness_();
   set_nodes_gamma_();
-  set_nodes_reverse_();
   if (trigger_mode_activated_) {
     // trigger_mode=true: synchronized capture via PTP + scheduled GigE Vision
     // action commands. The action command gates every frame, so the free-run
