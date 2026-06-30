@@ -158,15 +158,6 @@ Existing params (`serial`, `pixelformat`, `exposure_time`, `gamma`,
 > (`4000.0`, not `4000`), or rclcpp rejects the integer override. A **fixed**
 > exposure is recommended in `trigger_mode` for deterministic capture.
 
-**Image flip:** `reverse_x` / `reverse_y` (bool, default `false`) toggle the
-camera's `ReverseX` / `ReverseY` nodes — the same switches as in ArenaView (set
-both `true` for a 180° flip). **Bayer caveat:** flipping a Bayer image changes the
-effective Bayer pattern (e.g. `RGGB` → `GRBG` for a single-axis flip, `BGGR` for
-both), but the published encoding string does not change — so debayered colors can
-come out wrong. If that happens, either use `pixelformat:=rgb8` (the camera
-debayers internally *before* the flip, so the pattern issue disappears) or set
-`pixelformat` to the flipped Bayer order to match.
-
 ---
 
 ## 6. Build (on the vehicle)
