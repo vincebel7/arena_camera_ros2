@@ -48,6 +48,13 @@ void ArenaCameraNode::parse_parameters_()
     gamma_ = this->declare_parameter("gamma", -1.0);
     is_passed_gamma_ = gamma_ >= 0;
 
+    // Image flip (matches the ReverseX/ReverseY toggles in ArenaView).
+    nextParameterToDeclare = "reverse_x";
+    reverse_x_ = this->declare_parameter("reverse_x", false);
+
+    nextParameterToDeclare = "reverse_y";
+    reverse_y_ = this->declare_parameter("reverse_y", false);
+
     nextParameterToDeclare = "trigger_mode";
     trigger_mode_activated_ = this->declare_parameter("trigger_mode", false);
     // no need to is_passed_trigger_mode_ because it is already a boolean
@@ -728,6 +735,7 @@ void ArenaCameraNode::set_nodes_()
   set_nodes_exposure_();
   set_nodes_target_brightness_();
   set_nodes_gamma_();
+  set_nodes_reverse_();
   if (trigger_mode_activated_) {
     // trigger_mode=true: synchronized capture via PTP + scheduled GigE Vision
     // action commands. The action command gates every frame, so the free-run
@@ -857,6 +865,18 @@ void ArenaCameraNode::set_nodes_gamma_()
     Arena::SetNodeValue<double>(nodemap, "Gamma", gamma_);
     log_info(std::string("\tGamma set to ") + std::to_string(gamma_));
   }
+}
+
+void ArenaCameraNode::set_nodes_reverse_()
+{
+  // Flip the image in the camera (same as the ReverseX/ReverseY toggles in
+  // ArenaView). Set unconditionally so the value is deterministic each launch
+  // (defaults are false). Must be set before StartStream.
+  auto nodemap = m_pDevice->GetNodeMap();
+  Arena::SetNodeValue<bool>(nodemap, "ReverseX", reverse_x_);
+  Arena::SetNodeValue<bool>(nodemap, "ReverseY", reverse_y_);
+  log_info(std::string("\tReverseX=") + (reverse_x_ ? "true" : "false") +
+           " ReverseY=" + (reverse_y_ ? "true" : "false"));
 }
 
 void ArenaCameraNode::set_nodes_trigger_mode_()

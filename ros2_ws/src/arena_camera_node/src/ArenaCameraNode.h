@@ -114,6 +114,9 @@ class ArenaCameraNode : public rclcpp::Node
   double gamma_;
   bool is_passed_gamma_;
 
+  bool reverse_x_;  // horizontal flip (GenICam ReverseX)
+  bool reverse_y_;  // vertical flip   (GenICam ReverseY)
+
   std::string pixelformat_pfnc_;
   std::string pixelformat_ros_;
   bool is_passed_pixelformat_ros_;
@@ -166,6 +169,7 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_exposure_();
   void set_nodes_target_brightness_();
   void set_nodes_gamma_();
+  void set_nodes_reverse_();
   void set_nodes_trigger_mode_();
   void set_nodes_action_trigger_mode_();
   void set_nodes_ptp_();
