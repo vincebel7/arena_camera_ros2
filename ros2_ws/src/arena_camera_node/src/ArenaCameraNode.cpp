@@ -302,10 +302,19 @@ void ArenaCameraNode::run_()
   set_nodes_();
   m_pDevice->StartStream();
 
-  if (is_passed_target_brightness_) {
+  if (is_passed_target_brightness_ && !is_passed_exposure_time_) {
+    // Autoexposure mode: converge once on the startup scene, then lock. NOTE
+    // this locks at whatever the lighting was at launch -- if the scene gets
+    // brighter later in the run (shade -> sun) the frames blow out. Use a
+    // static exposure_time for runs where that matters.
     Arena::SetNodeValue<GenICam::gcstring>(m_pDevice->GetNodeMap(), "ExposureAuto", "Once");
     log_info("\tExposureAuto set to Once (will lock after convergence)");
   }
+
+  // Read back what the camera is actually doing now that it is streaming, so a
+  // static exposure that did not "take" is visible in the log instead of only
+  // in the (too bright) images.
+  log_exposure_state_();
 
   if (!trigger_mode_activated_) {
     // free-run: blocking publish loop, exactly as before.
@@ -796,11 +805,57 @@ void ArenaCameraNode::set_nodes_roi_()
 
 void ArenaCameraNode::set_nodes_gain_()
 {
+  auto nodemap = m_pDevice->GetNodeMap();
   if (is_passed_gain_) {  // not default
-    auto nodemap = m_pDevice->GetNodeMap();
+    // The default user set leaves GainAuto running, which would immediately
+    // overwrite the value written below. Turn it off first, otherwise a "fixed"
+    // exposure still drifts in brightness because auto-gain compensates for it.
+    Arena::SetNodeValue<GenICam::gcstring>(nodemap, "GainAuto", "Off");
+    gain_ = clamp_to_node_range_(nodemap, "Gain", gain_);
     Arena::SetNodeValue<double>(nodemap, "Gain", gain_);
-    log_info(std::string("\tGain set to ") + std::to_string(gain_));
+    log_info(std::string("\tGainAuto set to Off, Gain set to ") +
+             std::to_string(gain_) + " dB");
+  } else if (is_passed_exposure_time_) {
+    // Static exposure requested but no gain given. GainAuto must still be
+    // turned off: with a fixed (short) exposure the camera's auto-gain would
+    // otherwise crank gain to hit its brightness target, which is exactly the
+    // "static exposure but the image is bright and noisy" symptom. 0 dB is the
+    // sensor's clean floor and the right default when brightness is going to be
+    // recovered in post. Pass gain:=<dB> to choose a different fixed gain.
+    Arena::SetNodeValue<GenICam::gcstring>(nodemap, "GainAuto", "Off");
+    Arena::SetNodeValue<double>(nodemap, "Gain", 0.0);
+    log_info(
+        "\tstatic exposure: GainAuto set to Off, Gain set to 0.0 dB "
+        "(default; pass gain:=<dB> to override)");
   }
+}
+
+double ArenaCameraNode::clamp_to_node_range_(GenApi::INodeMap* nodemap,
+                                             const char* node_name,
+                                             double value)
+{
+  // Writing a float node outside its [min, max] throws a GenICam exception and
+  // kills the node at startup. Clamp instead and say so, so a typo'd or
+  // out-of-range exposure/gain still launches with the nearest legal value.
+  try {
+    GenApi::CFloatPtr pNode = nodemap->GetNode(node_name);
+    if (!pNode || !GenApi::IsReadable(pNode)) {
+      return value;
+    }
+    const double lo = pNode->GetMin();
+    const double hi = pNode->GetMax();
+    if (value < lo || value > hi) {
+      const double clamped = std::min(std::max(value, lo), hi);
+      log_warn(std::string("\t") + node_name + " " + std::to_string(value) +
+               " is outside the camera's range [" + std::to_string(lo) + ", " +
+               std::to_string(hi) + "]; using " + std::to_string(clamped));
+      return clamped;
+    }
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not read range of ") + node_name + ": " +
+             e.what());
+  }
+  return value;
 }
 
 void ArenaCameraNode::set_nodes_pixelformat_()
@@ -845,19 +900,80 @@ void ArenaCameraNode::set_nodes_pixelformat_()
 void ArenaCameraNode::set_nodes_exposure_()
 {
   if (is_passed_exposure_time_) {
+    // Static exposure mode. Every frame of the run is exposed for exactly
+    // exposure_time_ us; nothing on the camera adapts to the scene (gain is
+    // locked in set_nodes_gain_(), target_brightness is ignored in
+    // set_nodes_target_brightness_()). Expose DARK and lift in post.
     auto nodemap = m_pDevice->GetNodeMap();
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Off");
+    // Range is only meaningful once ExposureAuto is Off, hence the order.
+    exposure_time_ = clamp_to_node_range_(nodemap, "ExposureTime", exposure_time_);
     Arena::SetNodeValue<double>(nodemap, "ExposureTime", exposure_time_);
+    // The camera rounds to its exposure increment; log what it actually took.
+    const double applied = Arena::GetNodeValue<double>(nodemap, "ExposureTime");
+    log_info(std::string("\tExposureAuto set to Off, ExposureTime set to ") +
+             std::to_string(applied) + " us (requested " +
+             std::to_string(exposure_time_) + ")");
   }
 }
 
 void ArenaCameraNode::set_nodes_target_brightness_()
 {
   if (is_passed_target_brightness_) {
+    if (is_passed_exposure_time_) {
+      // A static exposure_time is an explicit request for a fixed exposure;
+      // it takes precedence. (Previously this ran after set_nodes_exposure_()
+      // and switched ExposureAuto back on, silently discarding the fixed
+      // exposure -- so a "static" launch came out auto-exposed and bright.)
+      log_warn(
+          "\tboth exposure_time and target_brightness were passed: keeping the "
+          "static exposure_time and IGNORING target_brightness (ExposureAuto "
+          "stays Off).");
+      return;
+    }
     auto nodemap = m_pDevice->GetNodeMap();
     Arena::SetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto", "Continuous");
     Arena::SetNodeValue<int64_t>(nodemap, "TargetBrightness", target_brightness_);
     log_info(std::string("\tTargetBrightness set to ") + std::to_string(target_brightness_));
+  }
+}
+
+void ArenaCameraNode::log_exposure_state_()
+{
+  // One line of ground truth from the camera after StartStream: exposure/gain
+  // auto state and the values in effect. In static mode anything other than
+  // ExposureAuto=Off / GainAuto=Off is an error worth shouting about, because
+  // the images will be auto-brightened even though the launch asked for static.
+  try {
+    auto nodemap = m_pDevice->GetNodeMap();
+    const std::string exposure_auto =
+        Arena::GetNodeValue<GenICam::gcstring>(nodemap, "ExposureAuto").c_str();
+    const std::string gain_auto =
+        Arena::GetNodeValue<GenICam::gcstring>(nodemap, "GainAuto").c_str();
+    const double exposure_us =
+        Arena::GetNodeValue<double>(nodemap, "ExposureTime");
+    const double gain_db = Arena::GetNodeValue<double>(nodemap, "Gain");
+    std::string gamma_str = "n/a";
+    try {
+      gamma_str = std::to_string(Arena::GetNodeValue<double>(nodemap, "Gamma"));
+    } catch (GenICam::GenericException&) {
+    }
+
+    const std::string mode = is_passed_exposure_time_ ? "STATIC" : "auto";
+    log_info(std::string("\texposure state (") + mode +
+             "): ExposureAuto=" + exposure_auto + " ExposureTime=" +
+             std::to_string(exposure_us) + " us, GainAuto=" + gain_auto +
+             " Gain=" + std::to_string(gain_db) + " dB, Gamma=" + gamma_str);
+
+    if (is_passed_exposure_time_ &&
+        (exposure_auto != "Off" || gain_auto != "Off")) {
+      log_err(
+          "\tstatic exposure was requested but the camera still reports "
+          "ExposureAuto=" + exposure_auto + " / GainAuto=" + gain_auto +
+          ". Frames will NOT be statically exposed.");
+    }
+  } catch (GenICam::GenericException& e) {
+    log_warn(std::string("\tcould not read back exposure state: ") + e.what());
   }
 }
 

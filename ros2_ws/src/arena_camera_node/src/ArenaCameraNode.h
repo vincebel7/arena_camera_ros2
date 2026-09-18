@@ -169,6 +169,12 @@ class ArenaCameraNode : public rclcpp::Node
   void set_nodes_exposure_();
   void set_nodes_target_brightness_();
   void set_nodes_gamma_();
+  // Clamp a float node write into the camera's [min, max] (warns if clamped).
+  double clamp_to_node_range_(GenApi::INodeMap* nodemap, const char* node_name,
+                              double value);
+  // Log ExposureAuto/ExposureTime/GainAuto/Gain/Gamma as the camera reports
+  // them after StartStream; errors if static exposure did not take.
+  void log_exposure_state_();
   void set_nodes_reverse_();
   void set_nodes_trigger_mode_();
   void set_nodes_action_trigger_mode_();

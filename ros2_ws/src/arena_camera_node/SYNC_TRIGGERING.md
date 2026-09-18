@@ -156,7 +156,9 @@ Existing params (`serial`, `pixelformat`, `exposure_time`, `gamma`,
 
 > Note: `exposure_time` is declared as a **double** — pass it as a float
 > (`4000.0`, not `4000`), or rclcpp rejects the integer override. A **fixed**
-> exposure is recommended in `trigger_mode` for deterministic capture.
+> exposure is recommended in `trigger_mode` for deterministic capture; passing
+> it selects static exposure mode (§5b): `ExposureAuto`/`GainAuto` off, `gain`
+> defaults to 0 dB, `target_brightness` ignored.
 
 **Image flip:** `reverse_x` / `reverse_y` (bool, default `false`) toggle the
 camera's `ReverseX` / `ReverseY` nodes — the same switches as in ArenaView (set
@@ -166,6 +168,47 @@ both), but the published encoding string does not change — so debayered colors
 come out wrong. If that happens, either use `pixelformat:=rgb8` (the camera
 debayers internally *before* the flip, so the pattern issue disappears) or set
 `pixelformat` to the flipped Bayer order to match.
+
+---
+
+## 5b. Static exposure (expose dark, recover in post)
+
+For data capture the cameras should not adapt to the scene: a fixed exposure and
+fixed gain make brightness comparable across frames and across the six cameras,
+and let the whole run be lifted afterwards with one consistent adjustment. The
+recommended setting is deliberately **dark** (highlights cannot be recovered once
+clipped; shadows can be lifted).
+
+**Static exposure mode = pass `exposure_time`.** No new parameter; passing it
+now means the following, all in `set_nodes_*()`:
+
+| Step | Node(s) | Notes |
+|---|---|---|
+| `set_nodes_exposure_()` | `ExposureAuto=Off`, `ExposureTime=<us>` | Value is clamped into the node's `[min,max]` (warning logged) instead of throwing; the value the camera actually took is logged. |
+| `set_nodes_gain_()` | `GainAuto=Off`, `Gain=<gain>` **or 0 dB if `gain` was not passed** | Without this the camera's auto-gain compensates for the short exposure and the frames come out bright and noisy — the "static exposure but the image is very bright" symptom. |
+| `set_nodes_target_brightness_()` | *skipped* when `exposure_time` is passed | Previously it ran **after** the exposure step and set `ExposureAuto=Continuous`, silently discarding the fixed exposure. `exposure_time` now takes precedence and `target_brightness` is ignored with a warning. |
+| `run_()` after `StartStream` | reads back `ExposureAuto`, `ExposureTime`, `GainAuto`, `Gain`, `Gamma` | Logged as `exposure state (STATIC): …`; logs an **error** if either auto is not `Off`. This is the line to check on the vehicle. |
+
+Autoexposure (`target_brightness` without `exposure_time`) is unchanged:
+`ExposureAuto=Continuous` + `TargetBrightness`, then `ExposureAuto=Once` after
+`StartStream`, i.e. it converges on the startup scene and locks.
+
+Gamma is independent of all this. The toolkit launcher keeps `gamma=0.5`, which
+lifts shadows *before* 8-bit quantization (more usable shadow detail in a dark
+frame) at the cost of non-linear stored pixels; the post tool undoes it
+(`--camera-gamma`). Use `gamma:=1.0` for linear pixels straight from the bag.
+
+Tooling (toolkit repo): `drivers/lucid-drivers-sync-trigger-static-exposure.sh`
+(launcher, exposure/gain as CLI args), `drivers/check-exposure.py` (live or
+from-bag brightness / clipping stats per camera, for picking the exposure), and
+`postprocess/expose-in-post.py` (debayer + gamma undo + per-camera EV lift to
+viewable images).
+
+Implementation detail for the next person: `clamp_to_node_range_()` uses a
+`GenApi::CFloatPtr` and `GetMin()/GetMax()` (as in LUCID's `Cpp_Exposure`
+example) — read **after** `ExposureAuto=Off`, since the range is only meaningful
+then. `[verify]` on the vehicle: the exact `ExposureTime` min at 0 dB and that
+`Gain` accepts `0.0` on the TRI023S/TRT023S (both expected to be fine).
 
 ---
 
@@ -233,6 +276,7 @@ Still to keep in mind:
 | Continuous rate stuck at ~4.5 Hz | Scheduler queued ~1 s of commands; camera holds only one pending | Schedule each trigger `action_lead_time` ahead (one in flight) |
 | Node hangs on a rejected param | `exposure_time` passed as int (declared double) | Pass `4000.0` |
 | Heavy frame loss at 30 Hz | Six synchronized frames burst the host at once | `GevSCFTD` per-camera transmission staggering (this driver); reliable QoS + buffers (recorder side) |
+| "Static" exposure came out bright / washed out | `GainAuto` left on (auto-gain compensated for the short exposure); `target_brightness` re-enabled `ExposureAuto` after the fixed exposure was set | Static mode locks gain (0 dB default), `exposure_time` wins over `target_brightness`, state read back and logged after `StartStream` (§5b) |
 
 See the toolkit's `SYNC_RECORDING.md` for the recording-side analysis (QoS,
 buffers, memory) and the launch/trigger/verification tooling.
