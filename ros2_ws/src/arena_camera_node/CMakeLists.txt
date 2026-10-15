@@ -50,6 +50,10 @@ find_package(sensor_msgs REQUIRED)
 find_package(camera_info_manager REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(arena_sdk REQUIRED)
+# trigger_mode runs the synchronized-capture acquisition loop in a std::thread;
+# ensure the threading library is linked explicitly (in addition to what rclcpp
+# propagates).
+find_package(Threads REQUIRED)
 
 # ------------
 # EXPORT DEPS
@@ -140,8 +144,8 @@ add_executable(${target_name}
 # ROS DEP
 # - this way, it will find our header libs automatically
 # - for Arenasdk the cmake way is used no ament
-ament_target_dependencies(${target_name}  rclcpp 
-                                          std_msgs 
+ament_target_dependencies(${target_name}  rclcpp
+                                          std_msgs
                                           std_srvs
                                           sensor_msgs
                                           camera_info_manager
@@ -149,6 +153,9 @@ ament_target_dependencies(${target_name}  rclcpp
                                           )
 # header-only JSON parser for camera_intrinsics_file
 target_link_libraries(${target_name} nlohmann_json::nlohmann_json)
+
+# std::thread / std::mutex used by the synchronized trigger_mode acquisition
+target_link_libraries(${target_name} Threads::Threads)
 
 
 # MV EXEC to lib dir
