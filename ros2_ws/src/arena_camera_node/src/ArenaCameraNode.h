@@ -14,6 +14,8 @@
 // ros
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/timer.hpp>           // WallTimer
+#include <camera_info_manager/camera_info_manager.hpp>  // CameraInfoManager
+#include <sensor_msgs/msg/camera_info.hpp>  // camera info msg published
 #include <sensor_msgs/msg/image.hpp>  //image msg published
 #include <std_srvs/srv/trigger.hpp>   // Trigger
 
@@ -60,6 +62,8 @@ class ArenaCameraNode : public rclcpp::Node
   std::shared_ptr<Arena::IDevice> m_pDevice;
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr m_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr m_pub_camera_info_;
+  std::shared_ptr<camera_info_manager::CameraInfoManager> m_camera_info_manager_;
   rclcpp::TimerBase::SharedPtr m_wait_for_device_timer_callback_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr m_trigger_an_image_srv_;
 
@@ -68,6 +72,8 @@ class ArenaCameraNode : public rclcpp::Node
 
   std::string topic_;
   std::string camera_name_;
+  std::string camera_info_url_;
+  std::string camera_info_topic_;
 
   size_t width_;
   bool is_passed_width;
@@ -132,4 +138,5 @@ class ArenaCameraNode : public rclcpp::Node
       std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   void msg_form_image_(Arena::IImage* pImage,
                        sensor_msgs::msg::Image& image_msg);
+  void publish_camera_info_(const std_msgs::msg::Header& header);
 };

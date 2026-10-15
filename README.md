@@ -60,9 +60,18 @@ Arena Camera deriver for ROS2
           - the topic the camera publish images on.
           - default value is /arena_camera_node/images.
           - if passed as a ros argument, it should be preceded with "/"
+        - camera_info_topic
+          - the topic the camera publishes `sensor_msgs/CameraInfo` on, one message per image with the same header.
+          - default value is a sibling of `topic`, e.g. /arena_camera_node/camera_info.
+          - uses the same `QoS` as the image publisher.
+        - camera_info_url
+          - the calibration file to load, e.g. `file:///path/to/calibration.yaml`.
+          - default is empty, which loads `~/.ros/camera_info/<camera_name>.yaml` if it exists.
+          - if no calibration is found, camera info is published with only width and height set.
         - camera_name
           - a name to give the camera.
           - used as the frame_id (coordinate frame) defined in the message header.
+          - also the calibration name used by `camera_info_url`; must contain only letters, numbers and underscores.
           - default value is arena_camera.
         - width
           - the width of desired image
@@ -160,13 +169,14 @@ Arena Camera deriver for ROS2
       `ros2 run arena_camera_node start --ros-args -p exposure_time:=<proper value> -p trigger_mode=true`
     - To trigger an image run 
       `ros2 run arena_camera_node trigger_image`
+  - set_camera_info
+    - stores a new calibration (used by `camera_calibration`); it is saved to `camera_info_url`.
 
 # Road map
 - support windows
 - add -h flag to nodes
 - showimage node to view 2D and 3D images
 - launch file
-- camera_info
 - access to nodemaps
 - settings dump/read to/from file
 - support two devices

@@ -62,7 +62,23 @@ void ArenaCameraNode::parse_parameters_()
     topic_ = this->declare_parameter(
         "topic", std::string("/") + this->get_name() + "/images");
     // no need to is_passed_topic_
-    
+
+    nextParameterToDeclare = "camera_info_url";
+    camera_info_url_ = this->declare_parameter("camera_info_url", "");
+    // empty means camera_info_manager default
+    // (~/.ros/camera_info/<camera_name>.yaml) or uncalibrated
+
+    nextParameterToDeclare = "camera_info_topic";
+    // default is a sibling of the image topic
+    // e.g. /arena_camera_node/images -> /arena_camera_node/camera_info
+    auto last_slash = topic_.rfind('/');
+    auto default_camera_info_topic =
+        (last_slash == std::string::npos ? std::string("")
+                                         : topic_.substr(0, last_slash + 1)) +
+        "camera_info";
+    camera_info_topic_ = this->declare_parameter("camera_info_topic",
+                                                 default_camera_info_topic);
+
     nextParameterToDeclare = "qos_history";
     pub_qos_history_ = this->declare_parameter("qos_history", "");
     is_passed_pub_qos_history_ = pub_qos_history_ != "";
@@ -199,6 +215,20 @@ void ArenaCameraNode::initialize_()
                << '\n';
 
   log_info(pub_qos_info.str());
+
+  //
+  // Camera info ------------------------------------------------------------
+  //
+  // also provides the set_camera_info service used by camera_calibration
+  m_camera_info_manager_ =
+      std::make_shared<camera_info_manager::CameraInfoManager>(
+          this, camera_name_, camera_info_url_);
+  m_pub_camera_info_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(
+      camera_info_topic_, pub_qos_);
+  log_info(std::string("camera info published to ") + camera_info_topic_ +
+           (m_camera_info_manager_->isCalibrated()
+                ? " (calibrated)"
+                : " (uncalibrated; only width/height are set)"));
 }
 
 void ArenaCameraNode::wait_for_device_timer_callback_()
@@ -231,6 +261,18 @@ void ArenaCameraNode::run_()
   auto device = create_device_ros_();
   m_pDevice.reset(device);
   set_nodes_();
+
+  if (m_camera_info_manager_->isCalibrated()) {
+    auto camera_info = m_camera_info_manager_->getCameraInfo();
+    if (camera_info.width != width_ || camera_info.height != height_) {
+      log_warn(std::string("camera calibration resolution ") +
+               std::to_string(camera_info.width) + "X" +
+               std::to_string(camera_info.height) +
+               " does not match image resolution " + std::to_string(width_) +
+               "X" + std::to_string(height_));
+    }
+  }
+
   m_pDevice->StartStream();
 
   if (is_passed_target_brightness_) {
@@ -254,7 +296,9 @@ void ArenaCameraNode::publish_images_()
       pImage = m_pDevice->GetImage(1000);
       msg_form_image_(pImage, *p_image_msg);
 
+      auto header = p_image_msg->header;
       m_pub_->publish(std::move(p_image_msg));
+      publish_camera_info_(header);
 
       log_info(std::string("image ") + std::to_string(pImage->GetFrameId()) +
                " published to " + topic_);
@@ -339,6 +383,21 @@ void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
   }
 }
 
+void ArenaCameraNode::publish_camera_info_(const std_msgs::msg::Header& header)
+{
+  auto p_camera_info_msg = std::make_unique<sensor_msgs::msg::CameraInfo>(
+      m_camera_info_manager_->getCameraInfo());
+
+  // uncalibrated: still report the image size
+  if (p_camera_info_msg->width == 0 || p_camera_info_msg->height == 0) {
+    p_camera_info_msg->width = static_cast<uint32_t>(width_);
+    p_camera_info_msg->height = static_cast<uint32_t>(height_);
+  }
+  p_camera_info_msg->header = header;
+
+  m_pub_camera_info_->publish(std::move(p_camera_info_msg));
+}
+
 void ArenaCameraNode::publish_an_image_on_trigger_(
     std::shared_ptr<std_srvs::srv::Trigger::Request> request /*unused*/,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
@@ -381,7 +440,9 @@ void ArenaCameraNode::publish_an_image_on_trigger_(
     auto msg = std::string("image ") + std::to_string(pImage->GetFrameId()) +
                " published to " + topic_;
     msg_form_image_(pImage, *p_image_msg);
+    auto header = p_image_msg->header;
     m_pub_->publish(std::move(p_image_msg));
+    publish_camera_info_(header);
     response->message = msg;
     response->success = true;
 
