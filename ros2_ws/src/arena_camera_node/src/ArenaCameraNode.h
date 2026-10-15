@@ -73,6 +73,7 @@ class ArenaCameraNode : public rclcpp::Node
   std::string topic_;
   std::string camera_name_;
   std::string camera_info_url_;
+  std::string camera_intrinsics_file_;
   std::string camera_info_topic_;
 
   size_t width_;
@@ -138,5 +139,6 @@ class ArenaCameraNode : public rclcpp::Node
       std::shared_ptr<std_srvs::srv::Trigger::Response> response);
   void msg_form_image_(Arena::IImage* pImage,
                        sensor_msgs::msg::Image& image_msg);
+  sensor_msgs::msg::CameraInfo load_camera_intrinsics_(const std::string& path);
   void publish_camera_info_(const std_msgs::msg::Header& header);
 };

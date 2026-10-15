@@ -68,6 +68,12 @@ Arena Camera deriver for ROS2
           - the calibration file to load, e.g. `file:///path/to/calibration.yaml`.
           - default is empty, which loads `~/.ros/camera_info/<camera_name>.yaml` if it exists.
           - if no calibration is found, camera info is published with only width and height set.
+        - camera_intrinsics_file
+          - path to a JSON intrinsics file, e.g. `camera_intrinsics/intrinsics_matlab-cam1.json`.
+          - reads `image_width`, `image_height`, `camera_matrix` (3x3, 0-based principal point) and
+            `dist_coeffs` (OpenCV order; 5 = plumb_bob, 8 = rational_polynomial).
+          - overrides `camera_info_url` when passed. The node fails to start if the file is missing or invalid.
+          - `P` is set to `K` (no rectification rotation).
         - camera_name
           - a name to give the camera.
           - used as the frame_id (coordinate frame) defined in the message header.

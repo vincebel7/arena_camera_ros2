@@ -1,9 +1,15 @@
 #include <cstring>    // memcopy
+#include <fstream>    // std::ifstream
 #include <stdexcept>  // std::runtime_err
 #include <string>
+#include <vector>
+
+// JSON
+#include <nlohmann/json.hpp>
 
 // ROS
 #include "rmw/types.h"
+#include <sensor_msgs/distortion_models.hpp>
 
 // ArenaSDK
 #include "ArenaCameraNode.h"
@@ -67,6 +73,12 @@ void ArenaCameraNode::parse_parameters_()
     camera_info_url_ = this->declare_parameter("camera_info_url", "");
     // empty means camera_info_manager default
     // (~/.ros/camera_info/<camera_name>.yaml) or uncalibrated
+
+    nextParameterToDeclare = "camera_intrinsics_file";
+    camera_intrinsics_file_ =
+        this->declare_parameter("camera_intrinsics_file", "");
+    // JSON intrinsics e.g. camera_intrinsics/intrinsics_matlab-cam1.json
+    // overrides camera_info_url when passed
 
     nextParameterToDeclare = "camera_info_topic";
     // default is a sibling of the image topic
@@ -223,6 +235,15 @@ void ArenaCameraNode::initialize_()
   m_camera_info_manager_ =
       std::make_shared<camera_info_manager::CameraInfoManager>(
           this, camera_name_, camera_info_url_);
+  if (!camera_intrinsics_file_.empty()) {
+    if (!camera_info_url_.empty()) {
+      log_warn("camera_intrinsics_file overrides camera_info_url");
+    }
+    m_camera_info_manager_->setCameraInfo(
+        load_camera_intrinsics_(camera_intrinsics_file_));
+    log_info(std::string("camera intrinsics loaded from ") +
+             camera_intrinsics_file_);
+  }
   m_pub_camera_info_ = this->create_publisher<sensor_msgs::msg::CameraInfo>(
       camera_info_topic_, pub_qos_);
   log_info(std::string("camera info published to ") + camera_info_topic_ +
@@ -381,6 +402,57 @@ void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
         "Failed to create Image ROS MSG. Published Image Msg might be "
         "corrupted");
   }
+}
+
+sensor_msgs::msg::CameraInfo ArenaCameraNode::load_camera_intrinsics_(
+    const std::string& path)
+{
+  std::ifstream file(path);
+  if (!file) {
+    throw std::runtime_error("could not open camera_intrinsics_file " + path);
+  }
+
+  sensor_msgs::msg::CameraInfo camera_info;
+  try {
+    auto intrinsics = nlohmann::json::parse(file);
+
+    camera_info.width = intrinsics.at("image_width").get<uint32_t>();
+    camera_info.height = intrinsics.at("image_height").get<uint32_t>();
+
+    // K: 3x3 row-major, principal point 0-based (OpenCV)
+    auto& camera_matrix = intrinsics.at("camera_matrix");
+    for (size_t row = 0; row < 3; ++row) {
+      for (size_t col = 0; col < 3; ++col) {
+        camera_info.k[row * 3 + col] =
+            camera_matrix.at(row).at(col).get<double>();
+      }
+    }
+
+    // D: OpenCV order (k1, k2, p1, p2, k3[, k4, k5, k6])
+    camera_info.d = intrinsics.at("dist_coeffs").get<std::vector<double>>();
+  } catch (nlohmann::json::exception& e) {
+    throw std::runtime_error("invalid camera_intrinsics_file " + path + ": " +
+                             e.what());
+  }
+
+  if (camera_info.d.size() == 5) {
+    camera_info.distortion_model = sensor_msgs::distortion_models::PLUMB_BOB;
+  } else if (camera_info.d.size() == 8) {
+    camera_info.distortion_model =
+        sensor_msgs::distortion_models::RATIONAL_POLYNOMIAL;
+  } else {
+    throw std::runtime_error(
+        "camera_intrinsics_file " + path + " has " +
+        std::to_string(camera_info.d.size()) +
+        " dist_coeffs; expected 5 (plumb_bob) or 8 (rational_polynomial)");
+  }
+
+  // monocular: no rectification rotation, projection is K
+  const auto& k = camera_info.k;
+  camera_info.r = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  camera_info.p = {k[0], k[1], k[2], 0, k[3], k[4], k[5], 0, k[6], k[7], k[8], 0};
+
+  return camera_info;
 }
 
 void ArenaCameraNode::publish_camera_info_(const std_msgs::msg::Header& header)

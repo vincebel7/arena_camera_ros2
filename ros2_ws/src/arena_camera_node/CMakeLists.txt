@@ -48,6 +48,7 @@ find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(camera_info_manager REQUIRED)
+find_package(nlohmann_json REQUIRED)
 find_package(arena_sdk REQUIRED)
 
 # ------------
@@ -146,6 +147,8 @@ ament_target_dependencies(${target_name}  rclcpp
                                           camera_info_manager
                                           arena_sdk
                                           )
+# header-only JSON parser for camera_intrinsics_file
+target_link_libraries(${target_name} nlohmann_json::nlohmann_json)
 
 
 # MV EXEC to lib dir
