@@ -111,8 +111,8 @@ with staggering).
   `action_lead_time` ahead matches the camera's single-pending-action model, so
   nothing is dropped from a backlog and the requested rate is actually achieved.
 - **`header.stamp` is the capture time.** The driver sets the message stamp from
-  `pImage->GetTimestampNs()` (the camera's FrameStart timestamp in PTP/RTK time),
-  not the ROS clock — so the timestamp *is* the synchronized capture instant, and
+  `pImage->GetTimestampNs()` (the camera's FrameStart timestamp in PTP/RTK time,
+  shifted from TAI to UTC by −37 s), not the ROS clock — so the timestamp *is* the synchronized capture instant, and
   it is unaffected by anything downstream (e.g. transmission staggering).
 
 ---
@@ -262,8 +262,11 @@ Still to keep in mind:
   domain node.
 - **`gev_scftd` units** — treated as nanoseconds; if effective staggering looks
   off, confirm the unit on your SDK and re-tune the launcher's `scftd_step`.
-- **Timestamps are RTK GPS time**, not UTC/Unix. Apply the GPS↔UTC leap-second
-  offset downstream for fusion.
+- **Timestamps are UTC.** The cameras run on PTP time (TAI); the driver
+  subtracts a hardcoded 37 s (TAI − UTC) from `header.stamp` (image and
+  camera_info) so it matches the other sensors. Action-command execute times
+  remain raw PTP. Update the constant in `msg_form_image_` if a leap second is
+  ever added.
 
 ---
 

@@ -651,10 +651,17 @@ void ArenaCameraNode::msg_form_image_(Arena::IImage* pImage,
     //      - stamp.sec
     //      - stamp.nanosec
     //      - Frame ID
-    image_msg.header.stamp.sec =
-        static_cast<uint32_t>(pImage->GetTimestampNs() / 1000000000);
+    //
+    // The camera timestamp is PTP time (TAI). Convert it to UTC so stamps line
+    // up with the other sensors (lidar etc.). Only the published stamp is
+    // shifted; action-command scheduling stays on raw PTP time.
+    // TAI - UTC = 37 s since 2017-01-01; update if a leap second is added.
+    constexpr int64_t kTaiUtcOffsetNs = 37LL * 1000000000LL;
+    const int64_t utc_ns =
+        static_cast<int64_t>(pImage->GetTimestampNs()) - kTaiUtcOffsetNs;
+    image_msg.header.stamp.sec = static_cast<int32_t>(utc_ns / 1000000000);
     image_msg.header.stamp.nanosec =
-        static_cast<uint32_t>(pImage->GetTimestampNs() % 1000000000);
+        static_cast<uint32_t>(utc_ns % 1000000000);
     image_msg.header.frame_id = camera_name_;
 
     //
