@@ -18,10 +18,8 @@ Arena Camera driver for ROS2
   - build the docker image provided
   
 # Getting Started
-- clone repo or download release
+- clone this repo or download release
     
-    `git clone https://github.com/lucidvisionlabs/arena_camera_ros2.git`
-
 - install ArenaSDK and arena_api
   - https://thinklucid.com/downloads-hub/
 
